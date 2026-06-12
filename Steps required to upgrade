@@ -1,0 +1,369 @@
+# RHEL 8.10 to RHEL 9.6 In-Place Upgrade Using Leapp
+
+## Overview
+
+This document describes the successful in-place upgrade of Red Hat Enterprise Linux (RHEL) from **RHEL 8.10** to **RHEL 9.6** using the Leapp utility.
+
+According to Red Hat's supported upgrade paths, **RHEL 8.10 can be upgraded directly to RHEL 9.6 or RHEL 9.8** using Leapp.
+
+---
+
+# Upgrade Workflow Summary
+
+1. Verify current RHEL version
+2. Update RHEL 8 packages
+3. Verify subscription status
+4. Enable required repositories
+5. Install Leapp
+6. Set release to RHEL 8.10
+7. Run Leapp pre-upgrade assessment
+8. Review and resolve inhibitors
+9. Re-run pre-upgrade assessment
+10. Execute Leapp upgrade
+11. Review upgrade reports
+12. Reboot system
+13. Verify RHEL 9.6 installation
+
+---
+
+# Step 1: Verify Current RHEL Version
+
+```bash
+subscription-manager release
+```
+
+Displays the currently locked RHEL minor release version.
+
+```bash
+cat /etc/os-release
+```
+
+Shows the operating system version and release information.
+
+```bash
+dnf list kernel
+```
+
+Lists installed and available kernel packages.
+
+```bash
+uname -r
+```
+
+Displays the currently running kernel version.
+
+---
+
+# Step 2: Update Existing RHEL 8 Packages
+
+```bash
+dnf update -y --quiet
+```
+
+Updates all installed packages to the latest available versions within the current RHEL 8 release.
+
+Verify the running kernel:
+
+```bash
+uname -r
+```
+
+Verify OS version:
+
+```bash
+cat /etc/os-release
+```
+
+---
+
+# Step 3: Verify Subscription Status
+
+```bash
+subscription-manager status
+```
+
+Confirms that the system is properly registered and has an active Red Hat subscription.
+
+---
+
+# Step 4: Enable Required Repositories
+
+```bash
+subscription-manager repos \
+--enable rhel-8-for-x86_64-baseos-rpms \
+--enable rhel-8-for-x86_64-appstream-rpms
+```
+
+Enables the required BaseOS and AppStream repositories needed for the upgrade.
+
+---
+
+# Step 5: Install Leapp
+
+```bash
+dnf install leapp-upgrade -y
+```
+
+Installs the Leapp upgrade framework and dependencies.
+
+---
+
+# Step 6: Configure Release Version
+
+Remove any existing release lock:
+
+```bash
+subscription-manager release --unset
+```
+
+Lock the system to RHEL 8.10:
+
+```bash
+subscription-manager release --set 8.10
+```
+
+This ensures the system is running a supported source version before upgrading.
+
+---
+
+# Step 7: Run Pre-Upgrade Assessment
+
+```bash
+leapp preupgrade --target-version 9.6
+```
+
+Performs a compatibility assessment and generates reports identifying:
+
+* Upgrade blockers (Inhibitors)
+* High-risk items
+* Warnings
+* Required remediation actions
+
+Leapp creates reports under:
+
+```text
+/var/log/leapp/
+```
+
+Important files:
+
+```text
+/var/log/leapp/leapp-report.txt
+/var/log/leapp/leapp-report.json
+```
+
+Review the report:
+
+```bash
+vi /var/log/leapp/leapp-report.txt
+```
+
+---
+
+# Step 8: Resolve Identified Inhibitors
+
+During the assessment, two high-risk inhibitors were identified.
+
+## Inhibitor 1: Firewalld AllowZoneDrifting
+
+Check current configuration:
+
+```bash
+grep AllowZoneDrifting /etc/firewalld/firewalld.conf
+```
+
+Disable AllowZoneDrifting:
+
+```bash
+sed -i 's/^AllowZoneDrifting=.*/AllowZoneDrifting=no/' \
+/etc/firewalld/firewalld.conf
+```
+
+Restart firewalld:
+
+```bash
+systemctl restart firewalld
+```
+
+Verify:
+
+```bash
+grep AllowZoneDrifting /etc/firewalld/firewalld.conf
+```
+
+Expected output:
+
+```text
+AllowZoneDrifting=no
+```
+
+---
+
+## Inhibitor 2: Root Login / Administrative Access
+
+Review SSH root login configuration:
+
+```bash
+grep -n PermitRootLogin /etc/ssh/sshd_config
+```
+
+Ensure an administrative user exists with sudo privileges.
+
+Example:
+
+```bash
+usermod -aG wheel admin
+```
+
+This adds the user "admin" to the wheel group, allowing sudo access after the upgrade.
+
+---
+
+# Step 9: Re-Run Pre-Upgrade Assessment
+
+After resolving inhibitors:
+
+```bash
+leapp preupgrade --target-version 9.6
+```
+
+Review the report again and confirm that no upgrade inhibitors remain.
+
+---
+
+# Step 10: Perform the Upgrade
+
+Start the upgrade:
+
+```bash
+leapp upgrade --target-version 9.6
+```
+
+The upgrade process prepares the RHEL 9 packages and creates the upgrade environment.
+
+After completion, review the generated reports:
+
+```bash
+vi /var/log/leapp/leapp-report.txt
+```
+
+Verify that no critical issues remain.
+
+---
+
+# Step 11: Reboot the System
+
+```bash
+reboot
+```
+
+During reboot:
+
+* The system boots into the Leapp upgrade environment.
+* RHEL 9 packages are installed.
+* Existing packages are upgraded.
+* Configuration migration tasks are executed.
+
+Note: This phase may take considerable time depending on system size and package count.
+
+---
+
+# Step 12: Verify Successful Upgrade
+
+After the system comes online, verify the OS version:
+
+```bash
+cat /etc/redhat-release
+```
+
+Expected output:
+
+```text
+Red Hat Enterprise Linux release 9.6 (Plow)
+```
+
+Verify OS details:
+
+```bash
+cat /etc/os-release
+```
+
+Expected output:
+
+```text
+NAME="Red Hat Enterprise Linux"
+VERSION="9.6 (Plow)"
+ID="rhel"
+ID_LIKE="fedora"
+VERSION_ID="9.6"
+```
+
+Verify kernel version:
+
+```bash
+uname -r
+```
+
+Example:
+
+```text
+5.14.0-570.62.1.el9_6.x86_64
+```
+
+Verify subscription status:
+
+```bash
+subscription-manager status
+```
+
+---
+
+# Post-Upgrade Validation (Recommended)
+
+Verify enabled repositories:
+
+```bash
+subscription-manager repos --list-enabled
+```
+
+Check for failed services:
+
+```bash
+systemctl --failed
+```
+
+Verify installed kernel packages:
+
+```bash
+rpm -qa | grep kernel
+```
+
+Check overall system health:
+
+```bash
+dnf check
+```
+
+Review Leapp logs:
+
+```bash
+ls -ltr /var/log/leapp/
+```
+
+---
+
+# Result
+
+The system was successfully upgraded from:
+
+```text
+RHEL 8.10
+```
+
+to:
+
+```text
+RHEL 9.6 (Plow)
+```
+
+using the Leapp in-place upgrade framework with all identified upgrade inhibitors resolved prior to execution.
